@@ -1,0 +1,38 @@
+[package]
+name = "persistence"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+strum = "0.27.2"
+strum_macros = "0.27.2"
+# Async Trait: A library for writing async functions in traits
+async-trait = "0.1.88"
+bigdecimal = { version = "0.4.8", features = ["serde"] }
+business = { path = "../../business" }
+logger = { path = "../logger" }
+# Chrono: Date and time library for Rust
+chrono = { version = "0.4", features = ["serde"] }
+num-traits = "0.2.19"
+# Serde: Framework for serialization and deserialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.140"
+# Sqlx: Object-relational mapping (ORM) library for Rust
+sqlx = { version = "0.8.6", features = [
+  "runtime-tokio-rustls",
+  "postgres",
+  "uuid",
+  "chrono",
+  "macros",
+  "derive",
+  "migrate",
+  "json",
+  "bigdecimal",
+] }
+# ThisError: Error handling made easy
+thiserror = "2.0.12"
+# Tracing: Structured logging for diagnostics
+tracing = "0.1"
+tokio = { version = "1.44.1", features = ["full"] }
+# UUID: A library for generating universally unique identifiers
+uuid = { version = "1.16.0", features = ["v4", "serde"] }

@@ -1,0 +1,43 @@
+[package]
+name = "rest-api"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rest-api"
+path = "src/main.rs"
+
+[dependencies]
+# Anyhow: Error handling library for Rust
+anyhow = "1.0.98"
+# Business layer dependency
+business = { path = "../../business" }
+# Chrono: Date and time library for Rust
+chrono = { version = "0.4", features = ["serde"] }
+# Dotenvy: Loads environment variables from a `.env` file
+dotenvy = "0.15.7"
+# Infrastructure logger adapter
+logger = { path = "../../infrastructure/logger" }
+# OpenAI infrastructure adapter
+openai = { path = "../../infrastructure/openai" }
+# Persistence adapter for database
+persistence = { path = "../../infrastructure/persistence" }
+# Poem: A fast and easy-to-use web framework for Rust
+poem = "3.1.12"
+# Poem OpenAPI: OpenAPI support for Poem, with Swagger UI
+poem-openapi = { version = "5.1.16", features = ["swagger-ui", "uuid", "chrono"] }
+# Serde: Framework for serialization and deserialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.140"
+# SQLx: Database pool type for config module
+sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "postgres"] }
+# ThisError: Easy error handling
+thiserror = "2.0.12"
+# Tokio: An asynchronous runtime for Rust
+tokio = { version = "1.44.1", features = ["full"] }
+# Tracing: Structured logging
+tracing = "0.1.40"
+# Tracing-subscriber: Logger initialization
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# UUID: A library to generate universally unique identifiers
+uuid = { version = "1.16.0", features = ["v4", "serde"] }

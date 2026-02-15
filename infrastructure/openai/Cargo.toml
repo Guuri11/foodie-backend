@@ -1,0 +1,23 @@
+[package]
+name = "openai"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Business layer dependency
+business = { path = "../../business" }
+# async-trait: Library for writing async functions in traits
+async-trait = "0.1.88"
+# chrono: Date and time library for Rust
+chrono = { version = "0.4", features = ["serde"] }
+# regex: For parsing JSON from AI responses
+regex = "1.11.1"
+# reqwest: HTTP client for OpenAI and Open Food Facts APIs
+reqwest = { version = "0.12", features = ["json"] }
+# serde: Framework for serialization and deserialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0.140"
+# tokio: Asynchronous runtime for Rust
+tokio = { version = "1.28", features = ["rt", "sync"] }
+# uuid: Library for generating universally unique identifiers
+uuid = { version = "1.16.0", features = ["v4", "serde"] }

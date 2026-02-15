@@ -1,6 +1,9 @@
-[package]
-name = "foodie-backend"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace]
+members = [
+    "business",
+    "infrastructure/logger",
+    "infrastructure/openai",
+    "infrastructure/persistence",
+    "presentation/rest-api",
+]
+resolver = "3"

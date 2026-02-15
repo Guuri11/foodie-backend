@@ -1,0 +1,233 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
+use crate::domain::errors::RepositoryError;
+use crate::domain::logger::Logger;
+use crate::domain::product::errors::ProductError;
+use crate::domain::product::model::Product;
+use crate::domain::product::repository::ProductRepository;
+use crate::domain::product::use_cases::update::{UpdateProductParams, UpdateProductUseCase};
+use crate::domain::product::value_objects::ProductStatus;
+
+pub struct UpdateProductUseCaseImpl {
+    pub repository: Arc<dyn ProductRepository>,
+    pub logger: Arc<dyn Logger>,
+}
+
+#[async_trait]
+impl UpdateProductUseCase for UpdateProductUseCaseImpl {
+    async fn execute(&self, params: UpdateProductParams) -> Result<Product, ProductError> {
+        self.logger
+            .info(&format!("Updating product: {}", params.id));
+
+        if params.name.trim().is_empty() {
+            return Err(ProductError::NameEmpty);
+        }
+
+        if params.outcome.is_some() && params.status != ProductStatus::Finished {
+            return Err(ProductError::OutcomeRequiresFinishedStatus);
+        }
+
+        // Verify product exists
+        let existing = self
+            .repository
+            .get_by_id(params.id)
+            .await
+            .map_err(|e| match e {
+                RepositoryError::NotFound => ProductError::NotFound,
+                other => ProductError::Repository(other),
+            })?;
+
+        let updated_product = Product::from_repository(
+            existing.id,
+            params.name,
+            params.status,
+            params.location,
+            params.quantity,
+            params.expiry_date,
+            params.estimated_expiry_date,
+            params.outcome,
+            existing.created_at,
+            chrono::Utc::now(),
+        );
+
+        self.repository.save(&updated_product).await?;
+
+        self.logger
+            .info(&format!("Product updated: {}", updated_product.id));
+        Ok(updated_product)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::product::value_objects::{ProductOutcome, ProductStatus};
+    use chrono::Utc;
+    use mockall::mock;
+    use uuid::Uuid;
+
+    mock! {
+        pub ProductRepo {}
+
+        #[async_trait]
+        impl ProductRepository for ProductRepo {
+            async fn get_all(&self) -> Result<Vec<Product>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid) -> Result<Product, RepositoryError>;
+            async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
+            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+            async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+        }
+    }
+
+    mock! {
+        pub Log {}
+
+        impl Logger for Log {
+            fn info(&self, message: &str);
+            fn warn(&self, message: &str);
+            fn error(&self, message: &str);
+            fn debug(&self, message: &str);
+        }
+    }
+
+    fn mock_logger() -> Arc<dyn Logger> {
+        let mut logger = MockLog::new();
+        logger.expect_info().returning(|_| ());
+        logger.expect_warn().returning(|_| ());
+        logger.expect_error().returning(|_| ());
+        logger.expect_debug().returning(|_| ());
+        Arc::new(logger)
+    }
+
+    #[tokio::test]
+    async fn should_update_product_when_exists() {
+        let product_id = Uuid::new_v4();
+        let now = Utc::now();
+        let mut mock_repo = MockProductRepo::new();
+
+        mock_repo.expect_get_by_id().returning(move |_| {
+            Ok(Product::from_repository(
+                product_id,
+                "Old Name".to_string(),
+                ProductStatus::New,
+                None,
+                None,
+                None,
+                None,
+                None,
+                now,
+                now,
+            ))
+        });
+        mock_repo.expect_save().returning(|_| Ok(()));
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: product_id,
+                name: "Updated Olive Oil".to_string(),
+                status: ProductStatus::Opened,
+                location: None,
+                quantity: Some("750ml".to_string()),
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: None,
+            })
+            .await;
+
+        assert!(result.is_ok());
+        let product = result.unwrap();
+        assert_eq!(product.name, "Updated Olive Oil");
+        assert_eq!(product.status, ProductStatus::Opened);
+    }
+
+    #[tokio::test]
+    async fn should_reject_update_when_name_is_empty() {
+        let mock_repo = MockProductRepo::new();
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: Uuid::new_v4(),
+                name: "".to_string(),
+                status: ProductStatus::New,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: None,
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProductError::NameEmpty));
+    }
+
+    #[tokio::test]
+    async fn should_reject_update_outcome_when_status_not_finished() {
+        let mock_repo = MockProductRepo::new();
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: Uuid::new_v4(),
+                name: "Milk".to_string(),
+                status: ProductStatus::Opened,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: Some(ProductOutcome::ThrownAway),
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ProductError::OutcomeRequiresFinishedStatus
+        ));
+    }
+
+    #[tokio::test]
+    async fn should_return_not_found_when_updating_nonexistent_product() {
+        let mut mock_repo = MockProductRepo::new();
+        mock_repo
+            .expect_get_by_id()
+            .returning(|_| Err(RepositoryError::NotFound));
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: Uuid::new_v4(),
+                name: "Something".to_string(),
+                status: ProductStatus::New,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: None,
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProductError::NotFound));
+    }
+}
