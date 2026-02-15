@@ -9,9 +9,12 @@ use crate::domain::product::model::Product;
 use crate::domain::product::repository::ProductRepository;
 use crate::domain::product::use_cases::update::{UpdateProductParams, UpdateProductUseCase};
 use crate::domain::product::value_objects::ProductStatus;
+use crate::domain::shopping_item::model::ShoppingItem;
+use crate::domain::shopping_item::repository::ShoppingItemRepository;
 
 pub struct UpdateProductUseCaseImpl {
     pub repository: Arc<dyn ProductRepository>,
+    pub shopping_item_repository: Arc<dyn ShoppingItemRepository>,
     pub logger: Arc<dyn Logger>,
 }
 
@@ -39,9 +42,12 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
                 other => ProductError::Repository(other),
             })?;
 
+        let old_status = existing.status.clone();
+        let new_status = params.status.clone();
+
         let updated_product = Product::from_repository(
             existing.id,
-            params.name,
+            params.name.clone(),
             params.status,
             params.location,
             params.quantity,
@@ -54,6 +60,36 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
 
         self.repository.save(&updated_product).await?;
 
+        // Auto-add to shopping list when transitioning to Finished
+        if new_status == ProductStatus::Finished
+            && old_status != ProductStatus::Finished
+            && let Ok(None) = self
+                .shopping_item_repository
+                .find_by_product_id(existing.id)
+                .await
+            && let Ok(item) = ShoppingItem::new(params.name, Some(existing.id))
+            && let Err(e) = self.shopping_item_repository.save(&item).await
+        {
+            self.logger.warn(&format!(
+                "Failed to auto-add shopping item for product {}: {}",
+                existing.id, e
+            ));
+        }
+
+        // Remove from shopping list when reverting from Finished
+        if old_status == ProductStatus::Finished
+            && new_status != ProductStatus::Finished
+            && let Err(e) = self
+                .shopping_item_repository
+                .delete_by_product_id(existing.id)
+                .await
+        {
+            self.logger.warn(&format!(
+                "Failed to remove shopping item for product {}: {}",
+                existing.id, e
+            ));
+        }
+
         self.logger
             .info(&format!("Product updated: {}", updated_product.id));
         Ok(updated_product)
@@ -64,6 +100,7 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
 mod tests {
     use super::*;
     use crate::domain::product::value_objects::{ProductOutcome, ProductStatus};
+    use crate::domain::shopping_item::model::ShoppingItem;
     use chrono::Utc;
     use mockall::mock;
     use uuid::Uuid;
@@ -78,6 +115,21 @@ mod tests {
             async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
             async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
             async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+        }
+    }
+
+    mock! {
+        pub ShoppingItemRepo {}
+
+        #[async_trait]
+        impl ShoppingItemRepository for ShoppingItemRepo {
+            async fn get_all(&self) -> Result<Vec<ShoppingItem>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid) -> Result<ShoppingItem, RepositoryError>;
+            async fn find_by_product_id(&self, product_id: Uuid) -> Result<Option<ShoppingItem>, RepositoryError>;
+            async fn save(&self, item: &ShoppingItem) -> Result<(), RepositoryError>;
+            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
+            async fn delete_by_product_id(&self, product_id: Uuid) -> Result<(), RepositoryError>;
+            async fn delete_bought(&self) -> Result<u64, RepositoryError>;
         }
     }
 
@@ -101,11 +153,27 @@ mod tests {
         Arc::new(logger)
     }
 
+    fn make_product(id: Uuid, status: ProductStatus) -> Product {
+        Product::from_repository(
+            id,
+            "Test Product".to_string(),
+            status,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
     #[tokio::test]
     async fn should_update_product_when_exists() {
         let product_id = Uuid::new_v4();
         let now = Utc::now();
         let mut mock_repo = MockProductRepo::new();
+        let mut mock_shopping_repo = MockShoppingItemRepo::new();
 
         mock_repo.expect_get_by_id().returning(move |_| {
             Ok(Product::from_repository(
@@ -122,9 +190,11 @@ mod tests {
             ))
         });
         mock_repo.expect_save().returning(|_| Ok(()));
+        mock_shopping_repo.expect_find_by_product_id().never();
 
         let use_case = UpdateProductUseCaseImpl {
             repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
             logger: mock_logger(),
         };
 
@@ -150,9 +220,11 @@ mod tests {
     #[tokio::test]
     async fn should_reject_update_when_name_is_empty() {
         let mock_repo = MockProductRepo::new();
+        let mock_shopping_repo = MockShoppingItemRepo::new();
 
         let use_case = UpdateProductUseCaseImpl {
             repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
             logger: mock_logger(),
         };
 
@@ -176,9 +248,11 @@ mod tests {
     #[tokio::test]
     async fn should_reject_update_outcome_when_status_not_finished() {
         let mock_repo = MockProductRepo::new();
+        let mock_shopping_repo = MockShoppingItemRepo::new();
 
         let use_case = UpdateProductUseCaseImpl {
             repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
             logger: mock_logger(),
         };
 
@@ -205,12 +279,14 @@ mod tests {
     #[tokio::test]
     async fn should_return_not_found_when_updating_nonexistent_product() {
         let mut mock_repo = MockProductRepo::new();
+        let mock_shopping_repo = MockShoppingItemRepo::new();
         mock_repo
             .expect_get_by_id()
             .returning(|_| Err(RepositoryError::NotFound));
 
         let use_case = UpdateProductUseCaseImpl {
             repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
             logger: mock_logger(),
         };
 
@@ -229,5 +305,167 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ProductError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn should_auto_add_shopping_item_when_product_transitions_to_finished() {
+        let product_id = Uuid::new_v4();
+        let mut mock_repo = MockProductRepo::new();
+        let mut mock_shopping_repo = MockShoppingItemRepo::new();
+
+        mock_repo
+            .expect_get_by_id()
+            .returning(move |_| Ok(make_product(product_id, ProductStatus::Opened)));
+        mock_repo.expect_save().returning(|_| Ok(()));
+
+        mock_shopping_repo
+            .expect_find_by_product_id()
+            .returning(|_| Ok(None));
+        mock_shopping_repo.expect_save().returning(|_| Ok(()));
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: product_id,
+                name: "Test Product".to_string(),
+                status: ProductStatus::Finished,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: Some(ProductOutcome::Used),
+            })
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn should_not_duplicate_when_already_in_shopping_list() {
+        let product_id = Uuid::new_v4();
+        let mut mock_repo = MockProductRepo::new();
+        let mut mock_shopping_repo = MockShoppingItemRepo::new();
+
+        mock_repo
+            .expect_get_by_id()
+            .returning(move |_| Ok(make_product(product_id, ProductStatus::Opened)));
+        mock_repo.expect_save().returning(|_| Ok(()));
+
+        // Already exists in shopping list
+        mock_shopping_repo
+            .expect_find_by_product_id()
+            .returning(move |_| {
+                Ok(Some(ShoppingItem::from_repository(
+                    Uuid::new_v4(),
+                    "Test Product".to_string(),
+                    Some(product_id),
+                    false,
+                    Utc::now(),
+                    Utc::now(),
+                )))
+            });
+        // save should NOT be called on shopping_item_repository
+        mock_shopping_repo.expect_save().never();
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: product_id,
+                name: "Test Product".to_string(),
+                status: ProductStatus::Finished,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: Some(ProductOutcome::Used),
+            })
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn should_remove_shopping_item_when_reverted_from_finished() {
+        let product_id = Uuid::new_v4();
+        let mut mock_repo = MockProductRepo::new();
+        let mut mock_shopping_repo = MockShoppingItemRepo::new();
+
+        mock_repo
+            .expect_get_by_id()
+            .returning(move |_| Ok(make_product(product_id, ProductStatus::Finished)));
+        mock_repo.expect_save().returning(|_| Ok(()));
+
+        mock_shopping_repo
+            .expect_delete_by_product_id()
+            .returning(|_| Ok(()));
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: product_id,
+                name: "Test Product".to_string(),
+                status: ProductStatus::Opened,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: None,
+            })
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn should_not_affect_shopping_list_when_status_stays_finished() {
+        let product_id = Uuid::new_v4();
+        let mut mock_repo = MockProductRepo::new();
+        let mut mock_shopping_repo = MockShoppingItemRepo::new();
+
+        mock_repo
+            .expect_get_by_id()
+            .returning(move |_| Ok(make_product(product_id, ProductStatus::Finished)));
+        mock_repo.expect_save().returning(|_| Ok(()));
+
+        // Neither find_by_product_id nor delete_by_product_id should be called
+        mock_shopping_repo.expect_find_by_product_id().never();
+        mock_shopping_repo.expect_delete_by_product_id().never();
+        mock_shopping_repo.expect_save().never();
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: product_id,
+                name: "Test Product".to_string(),
+                status: ProductStatus::Finished,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: Some(ProductOutcome::Used),
+            })
+            .await;
+
+        assert!(result.is_ok());
     }
 }

@@ -9,6 +9,13 @@ pub mod application {
         pub mod scan_receipt;
         pub mod update;
     }
+    pub mod shopping_item {
+        pub mod clear_bought;
+        pub mod create;
+        pub mod delete;
+        pub mod get_all;
+        pub mod update;
+    }
     pub mod suggestion {
         pub mod generate;
     }
@@ -32,6 +39,18 @@ pub mod domain {
             pub mod get_by_id;
             pub mod identify;
             pub mod scan_receipt;
+            pub mod update;
+        }
+    }
+    pub mod shopping_item {
+        pub mod errors;
+        pub mod model;
+        pub mod repository;
+        pub mod use_cases {
+            pub mod clear_bought;
+            pub mod create;
+            pub mod delete;
+            pub mod get_all;
             pub mod update;
         }
     }

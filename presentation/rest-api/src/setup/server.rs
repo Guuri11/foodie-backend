@@ -12,6 +12,7 @@ impl Server {
             (
                 container.health_api,
                 container.product_api,
+                container.shopping_item_api,
                 container.suggestion_api,
             ),
             "Foodie Backend API",

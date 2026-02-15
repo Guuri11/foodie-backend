@@ -1,0 +1,112 @@
+use async_trait::async_trait;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+use business::domain::errors::RepositoryError;
+use business::domain::shopping_item::model::ShoppingItem;
+use business::domain::shopping_item::repository::ShoppingItemRepository;
+
+use super::entity::ShoppingItemEntity;
+
+pub struct ShoppingItemRepositoryPostgres {
+    pool: PgPool,
+}
+
+impl ShoppingItemRepositoryPostgres {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ShoppingItemRepository for ShoppingItemRepositoryPostgres {
+    async fn get_all(&self) -> Result<Vec<ShoppingItem>, RepositoryError> {
+        let entities = sqlx::query_as::<_, ShoppingItemEntity>(
+            "SELECT id, name, product_id, is_bought, created_at, updated_at FROM shopping_items ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|_| RepositoryError::DatabaseError)?;
+
+        Ok(entities.into_iter().map(|e| e.into_domain()).collect())
+    }
+
+    async fn get_by_id(&self, id: Uuid) -> Result<ShoppingItem, RepositoryError> {
+        let entity = sqlx::query_as::<_, ShoppingItemEntity>(
+            "SELECT id, name, product_id, is_bought, created_at, updated_at FROM shopping_items WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| RepositoryError::DatabaseError)?
+        .ok_or(RepositoryError::NotFound)?;
+
+        Ok(entity.into_domain())
+    }
+
+    async fn find_by_product_id(
+        &self,
+        product_id: Uuid,
+    ) -> Result<Option<ShoppingItem>, RepositoryError> {
+        let entity = sqlx::query_as::<_, ShoppingItemEntity>(
+            "SELECT id, name, product_id, is_bought, created_at, updated_at FROM shopping_items WHERE product_id = $1",
+        )
+        .bind(product_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|_| RepositoryError::DatabaseError)?;
+
+        Ok(entity.map(|e| e.into_domain()))
+    }
+
+    async fn save(&self, item: &ShoppingItem) -> Result<(), RepositoryError> {
+        sqlx::query(
+            r#"INSERT INTO shopping_items (id, name, product_id, is_bought, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                is_bought = EXCLUDED.is_bought,
+                updated_at = EXCLUDED.updated_at"#,
+        )
+        .bind(item.id)
+        .bind(&item.name)
+        .bind(item.product_id)
+        .bind(item.is_bought)
+        .bind(item.created_at)
+        .bind(item.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|_| RepositoryError::DatabaseError)?;
+
+        Ok(())
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
+        sqlx::query("DELETE FROM shopping_items WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|_| RepositoryError::DatabaseError)?;
+
+        Ok(())
+    }
+
+    async fn delete_by_product_id(&self, product_id: Uuid) -> Result<(), RepositoryError> {
+        sqlx::query("DELETE FROM shopping_items WHERE product_id = $1")
+            .bind(product_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|_| RepositoryError::DatabaseError)?;
+
+        Ok(())
+    }
+
+    async fn delete_bought(&self) -> Result<u64, RepositoryError> {
+        let result = sqlx::query("DELETE FROM shopping_items WHERE is_bought = TRUE")
+            .execute(&self.pool)
+            .await
+            .map_err(|_| RepositoryError::DatabaseError)?;
+
+        Ok(result.rows_affected())
+    }
+}

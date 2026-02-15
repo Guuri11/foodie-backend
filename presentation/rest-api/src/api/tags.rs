@@ -4,5 +4,6 @@ use poem_openapi::Tags;
 pub enum ApiTags {
     Health,
     Products,
+    ShoppingItems,
     Suggestions,
 }
