@@ -106,7 +106,7 @@ docker-compose/up:
 
 docker-compose/down:
 	@echo "${MAGENTA}Stopping containers with docker-compose...${NC}"
-	$(DOCKER_COMPOSE) down
+	$(DOCKER_COMPOSE) down -v
 
 run/rest-api:
 	@echo "${CYAN}Running REST API server...${NC}"

@@ -57,6 +57,7 @@ impl DependencyContainer {
         // Product use cases
         let create_use_case = Arc::new(CreateProductUseCaseImpl {
             repository: product_repository.clone(),
+            estimator: expiry_estimator.clone(),
             logger: logger.clone(),
         });
         let get_all_use_case = Arc::new(GetAllProductsUseCaseImpl {
