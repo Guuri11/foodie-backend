@@ -4,9 +4,11 @@ use uuid::Uuid;
 use crate::domain::product::errors::ProductError;
 use crate::domain::product::model::Product;
 use crate::domain::product::value_objects::{ProductLocation, ProductOutcome, ProductStatus};
+use crate::domain::shared::value_objects::UserId;
 
 pub struct UpdateProductParams {
     pub id: Uuid,
+    pub user_id: UserId,
     pub name: String,
     pub status: ProductStatus,
     pub location: Option<ProductLocation>,

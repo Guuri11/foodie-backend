@@ -9,7 +9,7 @@ use business::domain::product::use_cases::delete::{DeleteProductParams, DeletePr
 use business::domain::product::use_cases::estimate_expiry::{
     EstimateExpiryParams, EstimateExpiryUseCase,
 };
-use business::domain::product::use_cases::get_all::GetAllProductsUseCase;
+use business::domain::product::use_cases::get_all::{GetAllProductsParams, GetAllProductsUseCase};
 use business::domain::product::use_cases::get_by_id::{
     GetProductByIdParams, GetProductByIdUseCase,
 };
@@ -18,6 +18,7 @@ use business::domain::product::use_cases::identify::{
 };
 use business::domain::product::use_cases::scan_receipt::{ScanReceiptParams, ScanReceiptUseCase};
 use business::domain::product::use_cases::update::{UpdateProductParams, UpdateProductUseCase};
+use business::domain::shared::value_objects::UserId;
 
 use crate::api::error::{ErrorResponse, IntoErrorResponse};
 use crate::api::product::dto::{
@@ -25,6 +26,7 @@ use crate::api::product::dto::{
     IdentifyByBarcodeRequest, IdentifyByImageRequest, ProductIdentificationResponse,
     ProductResponse, ReceiptScanResponse, ScanReceiptRequest, UpdateProductRequest,
 };
+use crate::api::security::FirebaseBearer;
 use crate::api::tags::ApiTags;
 
 pub struct ProductApi {
@@ -75,8 +77,14 @@ impl ProductApi {
     ///
     /// Creates a new product in the kitchen inventory.
     #[oai(path = "/products", method = "post", tag = "ApiTags::Products")]
-    async fn create_product(&self, body: Json<CreateProductRequest>) -> CreateProductResponse {
+    async fn create_product(
+        &self,
+        auth: FirebaseBearer,
+        body: Json<CreateProductRequest>,
+    ) -> CreateProductResponse {
+        let user_id = UserId::new(auth.0);
         let params = CreateProductParams {
+            user_id,
             name: body.0.name,
             status: body.0.status.into(),
             location: body.0.location.map(|l| l.into()),
@@ -102,8 +110,13 @@ impl ProductApi {
     ///
     /// Returns all products that are not in 'finished' status.
     #[oai(path = "/products", method = "get", tag = "ApiTags::Products")]
-    async fn get_all_products(&self) -> GetAllProductsResponse {
-        match self.get_all_use_case.execute().await {
+    async fn get_all_products(&self, auth: FirebaseBearer) -> GetAllProductsResponse {
+        let user_id = UserId::new(auth.0);
+        match self
+            .get_all_use_case
+            .execute(GetAllProductsParams { user_id })
+            .await
+        {
             Ok(products) => {
                 let responses: Vec<ProductResponse> =
                     products.into_iter().map(|p| p.into()).collect();
@@ -120,7 +133,11 @@ impl ProductApi {
     ///
     /// Returns a single product by its unique identifier.
     #[oai(path = "/products/:id", method = "get", tag = "ApiTags::Products")]
-    async fn get_product_by_id(&self, id: Path<String>) -> GetProductByIdResponse {
+    async fn get_product_by_id(
+        &self,
+        auth: FirebaseBearer,
+        id: Path<String>,
+    ) -> GetProductByIdResponse {
         let uuid = match Uuid::parse_str(&id.0) {
             Ok(uuid) => uuid,
             Err(_) => {
@@ -131,9 +148,10 @@ impl ProductApi {
             }
         };
 
+        let user_id = UserId::new(auth.0);
         match self
             .get_by_id_use_case
-            .execute(GetProductByIdParams { id: uuid })
+            .execute(GetProductByIdParams { id: uuid, user_id })
             .await
         {
             Ok(product) => GetProductByIdResponse::Ok(Json(product.into())),
@@ -153,6 +171,7 @@ impl ProductApi {
     #[oai(path = "/products/:id", method = "put", tag = "ApiTags::Products")]
     async fn update_product(
         &self,
+        auth: FirebaseBearer,
         id: Path<String>,
         body: Json<UpdateProductRequest>,
     ) -> UpdateProductResponse {
@@ -166,8 +185,10 @@ impl ProductApi {
             }
         };
 
+        let user_id = UserId::new(auth.0);
         let params = UpdateProductParams {
             id: uuid,
+            user_id,
             name: body.0.name,
             status: body.0.status.into(),
             location: body.0.location.map(|l| l.into()),
@@ -194,7 +215,11 @@ impl ProductApi {
     ///
     /// Permanently removes a product from the inventory.
     #[oai(path = "/products/:id", method = "delete", tag = "ApiTags::Products")]
-    async fn delete_product(&self, id: Path<String>) -> DeleteProductResponse {
+    async fn delete_product(
+        &self,
+        auth: FirebaseBearer,
+        id: Path<String>,
+    ) -> DeleteProductResponse {
         let uuid = match Uuid::parse_str(&id.0) {
             Ok(uuid) => uuid,
             Err(_) => {
@@ -205,9 +230,10 @@ impl ProductApi {
             }
         };
 
+        let user_id = UserId::new(auth.0);
         match self
             .delete_use_case
-            .execute(DeleteProductParams { id: uuid })
+            .execute(DeleteProductParams { id: uuid, user_id })
             .await
         {
             Ok(()) => DeleteProductResponse::NoContent,
@@ -230,7 +256,11 @@ impl ProductApi {
         method = "post",
         tag = "ApiTags::Products"
     )]
-    async fn estimate_expiry(&self, id: Path<String>) -> EstimateExpiryResponse {
+    async fn estimate_expiry(
+        &self,
+        auth: FirebaseBearer,
+        id: Path<String>,
+    ) -> EstimateExpiryResponse {
         let uuid = match Uuid::parse_str(&id.0) {
             Ok(uuid) => uuid,
             Err(_) => {
@@ -241,9 +271,13 @@ impl ProductApi {
             }
         };
 
+        let user_id = UserId::new(auth.0);
         match self
             .estimate_expiry_use_case
-            .execute(EstimateExpiryParams { product_id: uuid })
+            .execute(EstimateExpiryParams {
+                product_id: uuid,
+                user_id,
+            })
             .await
         {
             Ok(product) => EstimateExpiryResponse::Ok(Json(product.into())),
@@ -267,6 +301,7 @@ impl ProductApi {
     )]
     async fn identify_by_image(
         &self,
+        _auth: FirebaseBearer,
         body: Json<IdentifyByImageRequest>,
     ) -> IdentifyByImageResponse {
         match self
@@ -294,6 +329,7 @@ impl ProductApi {
     )]
     async fn identify_by_barcode(
         &self,
+        _auth: FirebaseBearer,
         body: Json<IdentifyByBarcodeRequest>,
     ) -> IdentifyByBarcodeResponse {
         match self
@@ -319,7 +355,11 @@ impl ProductApi {
         method = "post",
         tag = "ApiTags::Products"
     )]
-    async fn scan_receipt(&self, body: Json<ScanReceiptRequest>) -> ScanReceiptResponse {
+    async fn scan_receipt(
+        &self,
+        _auth: FirebaseBearer,
+        body: Json<ScanReceiptRequest>,
+    ) -> ScanReceiptResponse {
         match self
             .scan_receipt_use_case
             .execute(ScanReceiptParams {
@@ -346,6 +386,7 @@ impl ProductApi {
     )]
     async fn estimate_expiry_date(
         &self,
+        _auth: FirebaseBearer,
         body: Json<EstimateExpiryDateRequest>,
     ) -> EstimateExpiryDateResponse {
         let estimation = self
@@ -366,6 +407,8 @@ pub enum CreateProductResponse {
     Created(Json<ProductResponse>),
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 500)]
     InternalError(Json<ErrorResponse>),
 }
@@ -374,6 +417,8 @@ pub enum CreateProductResponse {
 pub enum GetAllProductsResponse {
     #[oai(status = 200)]
     Ok(Json<Vec<ProductResponse>>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 500)]
     InternalError(Json<ErrorResponse>),
 }
@@ -384,6 +429,8 @@ pub enum GetProductByIdResponse {
     Ok(Json<ProductResponse>),
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 404)]
     NotFound(Json<ErrorResponse>),
     #[oai(status = 500)]
@@ -396,6 +443,8 @@ pub enum UpdateProductResponse {
     Ok(Json<ProductResponse>),
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 404)]
     NotFound(Json<ErrorResponse>),
     #[oai(status = 500)]
@@ -408,6 +457,8 @@ pub enum DeleteProductResponse {
     NoContent,
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 404)]
     NotFound(Json<ErrorResponse>),
     #[oai(status = 500)]
@@ -420,6 +471,8 @@ pub enum EstimateExpiryResponse {
     Ok(Json<ProductResponse>),
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 404)]
     NotFound(Json<ErrorResponse>),
     #[oai(status = 500)]
@@ -430,6 +483,8 @@ pub enum EstimateExpiryResponse {
 pub enum IdentifyByImageResponse {
     #[oai(status = 200)]
     Ok(Json<ProductIdentificationResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 422)]
     UnprocessableEntity(Json<ErrorResponse>),
 }
@@ -438,6 +493,8 @@ pub enum IdentifyByImageResponse {
 pub enum IdentifyByBarcodeResponse {
     #[oai(status = 200)]
     Ok(Json<ProductIdentificationResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 422)]
     UnprocessableEntity(Json<ErrorResponse>),
 }
@@ -446,6 +503,8 @@ pub enum IdentifyByBarcodeResponse {
 pub enum ScanReceiptResponse {
     #[oai(status = 200)]
     Ok(Json<ReceiptScanResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 422)]
     UnprocessableEntity(Json<ErrorResponse>),
 }
@@ -454,4 +513,6 @@ pub enum ScanReceiptResponse {
 pub enum EstimateExpiryDateResponse {
     #[oai(status = 200)]
     Ok(Json<ExpiryEstimationResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
 }

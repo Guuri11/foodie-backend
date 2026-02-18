@@ -4,10 +4,12 @@ use uuid::Uuid;
 
 use business::domain::product::model::Product;
 use business::domain::product::value_objects::{ProductLocation, ProductOutcome, ProductStatus};
+use business::domain::shared::value_objects::UserId;
 
 #[derive(Debug, FromRow)]
 pub struct ProductEntity {
     pub id: Uuid,
+    pub user_id: String,
     pub name: String,
     pub status: String,
     pub location: Option<String>,
@@ -23,6 +25,7 @@ impl ProductEntity {
     pub fn into_domain(self) -> Product {
         Product::from_repository(
             self.id,
+            UserId::new(&self.user_id),
             self.name,
             self.status
                 .parse::<ProductStatus>()

@@ -27,7 +27,7 @@ impl UpdateShoppingItemUseCase for UpdateShoppingItemUseCaseImpl {
 
         let existing = self
             .repository
-            .get_by_id(params.id)
+            .get_by_id(params.id, &params.user_id)
             .await
             .map_err(|e| match e {
                 RepositoryError::NotFound => ShoppingItemError::NotFound,
@@ -44,6 +44,7 @@ impl UpdateShoppingItemUseCase for UpdateShoppingItemUseCaseImpl {
 
         let updated = ShoppingItem::from_repository(
             existing.id,
+            existing.user_id,
             name,
             existing.product_id,
             is_bought,
@@ -62,6 +63,7 @@ impl UpdateShoppingItemUseCase for UpdateShoppingItemUseCaseImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::shared::value_objects::UserId;
     use mockall::mock;
     use uuid::Uuid;
 
@@ -70,13 +72,13 @@ mod tests {
 
         #[async_trait]
         impl ShoppingItemRepository for ShoppingItemRepo {
-            async fn get_all(&self) -> Result<Vec<ShoppingItem>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<ShoppingItem, RepositoryError>;
-            async fn find_by_product_id(&self, product_id: Uuid) -> Result<Option<ShoppingItem>, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<ShoppingItem>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<ShoppingItem, RepositoryError>;
+            async fn find_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<Option<ShoppingItem>, RepositoryError>;
             async fn save(&self, item: &ShoppingItem) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_by_product_id(&self, product_id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_bought(&self) -> Result<u64, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_bought(&self, user_id: &UserId) -> Result<u64, RepositoryError>;
         }
     }
 
@@ -100,14 +102,21 @@ mod tests {
         Arc::new(logger)
     }
 
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
+    }
+
     #[tokio::test]
     async fn should_toggle_bought_status() {
         let item_id = Uuid::new_v4();
+        let user_id = test_user_id();
+        let user_id_clone = user_id.clone();
         let mut mock_repo = MockShoppingItemRepo::new();
 
-        mock_repo.expect_get_by_id().returning(move |_| {
+        mock_repo.expect_get_by_id().returning(move |_, _| {
             Ok(ShoppingItem::from_repository(
                 item_id,
+                user_id_clone.clone(),
                 "Milk".to_string(),
                 None,
                 false,
@@ -125,6 +134,7 @@ mod tests {
         let result = use_case
             .execute(UpdateShoppingItemParams {
                 id: item_id,
+                user_id,
                 name: None,
                 is_bought: Some(true),
             })
@@ -137,11 +147,14 @@ mod tests {
     #[tokio::test]
     async fn should_update_name() {
         let item_id = Uuid::new_v4();
+        let user_id = test_user_id();
+        let user_id_clone = user_id.clone();
         let mut mock_repo = MockShoppingItemRepo::new();
 
-        mock_repo.expect_get_by_id().returning(move |_| {
+        mock_repo.expect_get_by_id().returning(move |_, _| {
             Ok(ShoppingItem::from_repository(
                 item_id,
+                user_id_clone.clone(),
                 "Milk".to_string(),
                 None,
                 false,
@@ -159,6 +172,7 @@ mod tests {
         let result = use_case
             .execute(UpdateShoppingItemParams {
                 id: item_id,
+                user_id,
                 name: Some("Whole Milk".to_string()),
                 is_bought: None,
             })
@@ -173,7 +187,7 @@ mod tests {
         let mut mock_repo = MockShoppingItemRepo::new();
         mock_repo
             .expect_get_by_id()
-            .returning(|_| Err(RepositoryError::NotFound));
+            .returning(|_, _| Err(RepositoryError::NotFound));
 
         let use_case = UpdateShoppingItemUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -183,6 +197,7 @@ mod tests {
         let result = use_case
             .execute(UpdateShoppingItemParams {
                 id: Uuid::new_v4(),
+                user_id: test_user_id(),
                 name: None,
                 is_bought: Some(true),
             })
@@ -195,11 +210,14 @@ mod tests {
     #[tokio::test]
     async fn should_reject_update_when_name_empty() {
         let item_id = Uuid::new_v4();
+        let user_id = test_user_id();
+        let user_id_clone = user_id.clone();
         let mut mock_repo = MockShoppingItemRepo::new();
 
-        mock_repo.expect_get_by_id().returning(move |_| {
+        mock_repo.expect_get_by_id().returning(move |_, _| {
             Ok(ShoppingItem::from_repository(
                 item_id,
+                user_id_clone.clone(),
                 "Milk".to_string(),
                 None,
                 false,
@@ -216,6 +234,7 @@ mod tests {
         let result = use_case
             .execute(UpdateShoppingItemParams {
                 id: item_id,
+                user_id,
                 name: Some("".to_string()),
                 is_bought: None,
             })

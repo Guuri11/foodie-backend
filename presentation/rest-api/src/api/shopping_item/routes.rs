@@ -3,19 +3,25 @@ use std::sync::Arc;
 use poem_openapi::{OpenApi, param::Path, payload::Json};
 use uuid::Uuid;
 
-use business::domain::shopping_item::use_cases::clear_bought::ClearBoughtItemsUseCase;
+use business::domain::shared::value_objects::UserId;
+use business::domain::shopping_item::use_cases::clear_bought::{
+    ClearBoughtItemsParams, ClearBoughtItemsUseCase,
+};
 use business::domain::shopping_item::use_cases::create::{
     CreateShoppingItemParams, CreateShoppingItemUseCase,
 };
 use business::domain::shopping_item::use_cases::delete::{
     DeleteShoppingItemParams, DeleteShoppingItemUseCase,
 };
-use business::domain::shopping_item::use_cases::get_all::GetAllShoppingItemsUseCase;
+use business::domain::shopping_item::use_cases::get_all::{
+    GetAllShoppingItemsParams, GetAllShoppingItemsUseCase,
+};
 use business::domain::shopping_item::use_cases::update::{
     UpdateShoppingItemParams, UpdateShoppingItemUseCase,
 };
 
 use crate::api::error::{ErrorResponse, IntoErrorResponse};
+use crate::api::security::FirebaseBearer;
 use crate::api::shopping_item::dto::{
     ClearBoughtResponse, CreateShoppingItemRequest, ShoppingItemResponse, UpdateShoppingItemRequest,
 };
@@ -60,8 +66,11 @@ impl ShoppingItemApi {
         method = "get",
         tag = "ApiTags::ShoppingItems"
     )]
-    async fn get_all(&self) -> GetAllShoppingItemsResponse {
-        match self.get_all_use_case.execute().await {
+    async fn get_all(&self, auth: FirebaseBearer) -> GetAllShoppingItemsResponse {
+        let user_id = UserId::new(auth.0);
+        let params = GetAllShoppingItemsParams { user_id };
+
+        match self.get_all_use_case.execute(params).await {
             Ok(items) => {
                 let responses: Vec<ShoppingItemResponse> =
                     items.into_iter().map(|i| i.into()).collect();
@@ -83,7 +92,13 @@ impl ShoppingItemApi {
         method = "post",
         tag = "ApiTags::ShoppingItems"
     )]
-    async fn create(&self, body: Json<CreateShoppingItemRequest>) -> CreateShoppingItemResponse {
+    async fn create(
+        &self,
+        auth: FirebaseBearer,
+        body: Json<CreateShoppingItemRequest>,
+    ) -> CreateShoppingItemResponse {
+        let user_id = UserId::new(auth.0);
+
         let product_id = match &body.0.product_id {
             Some(id) => match Uuid::parse_str(id) {
                 Ok(uuid) => Some(uuid),
@@ -98,6 +113,7 @@ impl ShoppingItemApi {
         };
 
         let params = CreateShoppingItemParams {
+            user_id,
             name: body.0.name,
             product_id,
         };
@@ -124,9 +140,12 @@ impl ShoppingItemApi {
     )]
     async fn update(
         &self,
+        auth: FirebaseBearer,
         id: Path<String>,
         body: Json<UpdateShoppingItemRequest>,
     ) -> UpdateShoppingItemResponse {
+        let user_id = UserId::new(auth.0);
+
         let uuid = match Uuid::parse_str(&id.0) {
             Ok(uuid) => uuid,
             Err(_) => {
@@ -138,6 +157,7 @@ impl ShoppingItemApi {
         };
 
         let params = UpdateShoppingItemParams {
+            user_id,
             id: uuid,
             name: body.0.name,
             is_bought: body.0.is_bought,
@@ -164,7 +184,9 @@ impl ShoppingItemApi {
         method = "delete",
         tag = "ApiTags::ShoppingItems"
     )]
-    async fn delete(&self, id: Path<String>) -> DeleteShoppingItemResponse {
+    async fn delete(&self, auth: FirebaseBearer, id: Path<String>) -> DeleteShoppingItemResponse {
+        let user_id = UserId::new(auth.0);
+
         let uuid = match Uuid::parse_str(&id.0) {
             Ok(uuid) => uuid,
             Err(_) => {
@@ -177,7 +199,7 @@ impl ShoppingItemApi {
 
         match self
             .delete_use_case
-            .execute(DeleteShoppingItemParams { id: uuid })
+            .execute(DeleteShoppingItemParams { user_id, id: uuid })
             .await
         {
             Ok(()) => DeleteShoppingItemResponse::NoContent,
@@ -199,8 +221,11 @@ impl ShoppingItemApi {
         method = "delete",
         tag = "ApiTags::ShoppingItems"
     )]
-    async fn clear_bought(&self) -> ClearBoughtItemsResponse {
-        match self.clear_bought_use_case.execute().await {
+    async fn clear_bought(&self, auth: FirebaseBearer) -> ClearBoughtItemsResponse {
+        let user_id = UserId::new(auth.0);
+        let params = ClearBoughtItemsParams { user_id };
+
+        match self.clear_bought_use_case.execute(params).await {
             Ok(count) => ClearBoughtItemsResponse::Ok(Json(ClearBoughtResponse { count })),
             Err(err) => {
                 let (_status, json) = err.into_error_response();
@@ -214,6 +239,8 @@ impl ShoppingItemApi {
 pub enum GetAllShoppingItemsResponse {
     #[oai(status = 200)]
     Ok(Json<Vec<ShoppingItemResponse>>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 500)]
     InternalError(Json<ErrorResponse>),
 }
@@ -224,6 +251,8 @@ pub enum CreateShoppingItemResponse {
     Created(Json<ShoppingItemResponse>),
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 500)]
     InternalError(Json<ErrorResponse>),
 }
@@ -234,6 +263,8 @@ pub enum UpdateShoppingItemResponse {
     Ok(Json<ShoppingItemResponse>),
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 404)]
     NotFound(Json<ErrorResponse>),
     #[oai(status = 500)]
@@ -246,6 +277,8 @@ pub enum DeleteShoppingItemResponse {
     NoContent,
     #[oai(status = 400)]
     BadRequest(Json<ErrorResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 404)]
     NotFound(Json<ErrorResponse>),
     #[oai(status = 500)]
@@ -256,6 +289,8 @@ pub enum DeleteShoppingItemResponse {
 pub enum ClearBoughtItemsResponse {
     #[oai(status = 200)]
     Ok(Json<ClearBoughtResponse>),
+    #[oai(status = 401)]
+    Unauthorized(Json<ErrorResponse>),
     #[oai(status = 500)]
     InternalError(Json<ErrorResponse>),
 }

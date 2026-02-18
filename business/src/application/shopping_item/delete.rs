@@ -21,16 +21,16 @@ impl DeleteShoppingItemUseCase for DeleteShoppingItemUseCaseImpl {
         self.logger
             .info(&format!("Deleting shopping item: {}", params.id));
 
-        // Verify it exists
+        // Verify it exists and belongs to the user
         self.repository
-            .get_by_id(params.id)
+            .get_by_id(params.id, &params.user_id)
             .await
             .map_err(|e| match e {
                 RepositoryError::NotFound => ShoppingItemError::NotFound,
                 other => ShoppingItemError::Repository(other),
             })?;
 
-        self.repository.delete(params.id).await?;
+        self.repository.delete(params.id, &params.user_id).await?;
 
         self.logger
             .info(&format!("Shopping item deleted: {}", params.id));
@@ -41,6 +41,7 @@ impl DeleteShoppingItemUseCase for DeleteShoppingItemUseCaseImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::shared::value_objects::UserId;
     use crate::domain::shopping_item::model::ShoppingItem;
     use mockall::mock;
     use uuid::Uuid;
@@ -50,13 +51,13 @@ mod tests {
 
         #[async_trait]
         impl ShoppingItemRepository for ShoppingItemRepo {
-            async fn get_all(&self) -> Result<Vec<ShoppingItem>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<ShoppingItem, RepositoryError>;
-            async fn find_by_product_id(&self, product_id: Uuid) -> Result<Option<ShoppingItem>, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<ShoppingItem>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<ShoppingItem, RepositoryError>;
+            async fn find_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<Option<ShoppingItem>, RepositoryError>;
             async fn save(&self, item: &ShoppingItem) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_by_product_id(&self, product_id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_bought(&self) -> Result<u64, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_bought(&self, user_id: &UserId) -> Result<u64, RepositoryError>;
         }
     }
 
@@ -80,14 +81,21 @@ mod tests {
         Arc::new(logger)
     }
 
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
+    }
+
     #[tokio::test]
     async fn should_delete_existing_shopping_item() {
         let item_id = Uuid::new_v4();
+        let user_id = test_user_id();
+        let user_id_clone = user_id.clone();
         let mut mock_repo = MockShoppingItemRepo::new();
 
-        mock_repo.expect_get_by_id().returning(move |_| {
+        mock_repo.expect_get_by_id().returning(move |_, _| {
             Ok(ShoppingItem::from_repository(
                 item_id,
+                user_id_clone.clone(),
                 "Milk".to_string(),
                 None,
                 false,
@@ -95,7 +103,7 @@ mod tests {
                 chrono::Utc::now(),
             ))
         });
-        mock_repo.expect_delete().returning(|_| Ok(()));
+        mock_repo.expect_delete().returning(|_, _| Ok(()));
 
         let use_case = DeleteShoppingItemUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -103,7 +111,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(DeleteShoppingItemParams { id: item_id })
+            .execute(DeleteShoppingItemParams {
+                id: item_id,
+                user_id,
+            })
             .await;
 
         assert!(result.is_ok());
@@ -114,7 +125,7 @@ mod tests {
         let mut mock_repo = MockShoppingItemRepo::new();
         mock_repo
             .expect_get_by_id()
-            .returning(|_| Err(RepositoryError::NotFound));
+            .returning(|_, _| Err(RepositoryError::NotFound));
 
         let use_case = DeleteShoppingItemUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -122,7 +133,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(DeleteShoppingItemParams { id: Uuid::new_v4() })
+            .execute(DeleteShoppingItemParams {
+                id: Uuid::new_v4(),
+                user_id: test_user_id(),
+            })
             .await;
 
         assert!(result.is_err());

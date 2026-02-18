@@ -35,7 +35,7 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
         // Verify product exists
         let existing = self
             .repository
-            .get_by_id(params.id)
+            .get_by_id(params.id, &params.user_id)
             .await
             .map_err(|e| match e {
                 RepositoryError::NotFound => ProductError::NotFound,
@@ -47,6 +47,7 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
 
         let updated_product = Product::from_repository(
             existing.id,
+            existing.user_id.clone(),
             params.name.clone(),
             params.status,
             params.location,
@@ -65,9 +66,10 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
             && old_status != ProductStatus::Finished
             && let Ok(None) = self
                 .shopping_item_repository
-                .find_by_product_id(existing.id)
+                .find_by_product_id(existing.id, &params.user_id)
                 .await
-            && let Ok(item) = ShoppingItem::new(params.name, Some(existing.id))
+            && let Ok(item) =
+                ShoppingItem::new(params.user_id.clone(), params.name, Some(existing.id))
             && let Err(e) = self.shopping_item_repository.save(&item).await
         {
             self.logger.warn(&format!(
@@ -81,7 +83,7 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
             && new_status != ProductStatus::Finished
             && let Err(e) = self
                 .shopping_item_repository
-                .delete_by_product_id(existing.id)
+                .delete_by_product_id(existing.id, &params.user_id)
                 .await
         {
             self.logger.warn(&format!(
@@ -100,6 +102,7 @@ impl UpdateProductUseCase for UpdateProductUseCaseImpl {
 mod tests {
     use super::*;
     use crate::domain::product::value_objects::{ProductOutcome, ProductStatus};
+    use crate::domain::shared::value_objects::UserId;
     use crate::domain::shopping_item::model::ShoppingItem;
     use chrono::Utc;
     use mockall::mock;
@@ -110,11 +113,11 @@ mod tests {
 
         #[async_trait]
         impl ProductRepository for ProductRepo {
-            async fn get_all(&self) -> Result<Vec<Product>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<Product, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<Product, RepositoryError>;
             async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn get_active_products(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
         }
     }
 
@@ -123,13 +126,13 @@ mod tests {
 
         #[async_trait]
         impl ShoppingItemRepository for ShoppingItemRepo {
-            async fn get_all(&self) -> Result<Vec<ShoppingItem>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<ShoppingItem, RepositoryError>;
-            async fn find_by_product_id(&self, product_id: Uuid) -> Result<Option<ShoppingItem>, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<ShoppingItem>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<ShoppingItem, RepositoryError>;
+            async fn find_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<Option<ShoppingItem>, RepositoryError>;
             async fn save(&self, item: &ShoppingItem) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_by_product_id(&self, product_id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_bought(&self) -> Result<u64, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_bought(&self, user_id: &UserId) -> Result<u64, RepositoryError>;
         }
     }
 
@@ -144,6 +147,10 @@ mod tests {
         }
     }
 
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
+    }
+
     fn mock_logger() -> Arc<dyn Logger> {
         let mut logger = MockLog::new();
         logger.expect_info().returning(|_| ());
@@ -156,6 +163,7 @@ mod tests {
     fn make_product(id: Uuid, status: ProductStatus) -> Product {
         Product::from_repository(
             id,
+            UserId::new("test-user-id"),
             "Test Product".to_string(),
             status,
             None,
@@ -175,9 +183,10 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         let mut mock_shopping_repo = MockShoppingItemRepo::new();
 
-        mock_repo.expect_get_by_id().returning(move |_| {
+        mock_repo.expect_get_by_id().returning(move |_, _| {
             Ok(Product::from_repository(
                 product_id,
+                UserId::new("test-user-id"),
                 "Old Name".to_string(),
                 ProductStatus::New,
                 None,
@@ -201,6 +210,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: product_id,
+                user_id: test_user_id(),
                 name: "Updated Olive Oil".to_string(),
                 status: ProductStatus::Opened,
                 location: None,
@@ -231,6 +241,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: Uuid::new_v4(),
+                user_id: test_user_id(),
                 name: "".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -259,6 +270,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: Uuid::new_v4(),
+                user_id: test_user_id(),
                 name: "Milk".to_string(),
                 status: ProductStatus::Opened,
                 location: None,
@@ -282,7 +294,7 @@ mod tests {
         let mock_shopping_repo = MockShoppingItemRepo::new();
         mock_repo
             .expect_get_by_id()
-            .returning(|_| Err(RepositoryError::NotFound));
+            .returning(|_, _| Err(RepositoryError::NotFound));
 
         let use_case = UpdateProductUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -293,6 +305,40 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: Uuid::new_v4(),
+                user_id: test_user_id(),
+                name: "Something".to_string(),
+                status: ProductStatus::New,
+                location: None,
+                quantity: None,
+                expiry_date: None,
+                estimated_expiry_date: None,
+                outcome: None,
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProductError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn should_return_not_found_when_updating_product_from_other_user() {
+        let mut mock_repo = MockProductRepo::new();
+        let mock_shopping_repo = MockShoppingItemRepo::new();
+        // Repository returns NotFound for products belonging to other users
+        mock_repo
+            .expect_get_by_id()
+            .returning(|_, _| Err(RepositoryError::NotFound));
+
+        let use_case = UpdateProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            shopping_item_repository: Arc::new(mock_shopping_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(UpdateProductParams {
+                id: Uuid::new_v4(),
+                user_id: UserId::new("other-user-id"),
                 name: "Something".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -315,12 +361,12 @@ mod tests {
 
         mock_repo
             .expect_get_by_id()
-            .returning(move |_| Ok(make_product(product_id, ProductStatus::Opened)));
+            .returning(move |_, _| Ok(make_product(product_id, ProductStatus::Opened)));
         mock_repo.expect_save().returning(|_| Ok(()));
 
         mock_shopping_repo
             .expect_find_by_product_id()
-            .returning(|_| Ok(None));
+            .returning(|_, _| Ok(None));
         mock_shopping_repo.expect_save().returning(|_| Ok(()));
 
         let use_case = UpdateProductUseCaseImpl {
@@ -332,6 +378,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: product_id,
+                user_id: test_user_id(),
                 name: "Test Product".to_string(),
                 status: ProductStatus::Finished,
                 location: None,
@@ -353,15 +400,16 @@ mod tests {
 
         mock_repo
             .expect_get_by_id()
-            .returning(move |_| Ok(make_product(product_id, ProductStatus::Opened)));
+            .returning(move |_, _| Ok(make_product(product_id, ProductStatus::Opened)));
         mock_repo.expect_save().returning(|_| Ok(()));
 
         // Already exists in shopping list
         mock_shopping_repo
             .expect_find_by_product_id()
-            .returning(move |_| {
+            .returning(move |_, _| {
                 Ok(Some(ShoppingItem::from_repository(
                     Uuid::new_v4(),
+                    UserId::new("test-user-id"),
                     "Test Product".to_string(),
                     Some(product_id),
                     false,
@@ -381,6 +429,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: product_id,
+                user_id: test_user_id(),
                 name: "Test Product".to_string(),
                 status: ProductStatus::Finished,
                 location: None,
@@ -402,12 +451,12 @@ mod tests {
 
         mock_repo
             .expect_get_by_id()
-            .returning(move |_| Ok(make_product(product_id, ProductStatus::Finished)));
+            .returning(move |_, _| Ok(make_product(product_id, ProductStatus::Finished)));
         mock_repo.expect_save().returning(|_| Ok(()));
 
         mock_shopping_repo
             .expect_delete_by_product_id()
-            .returning(|_| Ok(()));
+            .returning(|_, _| Ok(()));
 
         let use_case = UpdateProductUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -418,6 +467,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: product_id,
+                user_id: test_user_id(),
                 name: "Test Product".to_string(),
                 status: ProductStatus::Opened,
                 location: None,
@@ -439,7 +489,7 @@ mod tests {
 
         mock_repo
             .expect_get_by_id()
-            .returning(move |_| Ok(make_product(product_id, ProductStatus::Finished)));
+            .returning(move |_, _| Ok(make_product(product_id, ProductStatus::Finished)));
         mock_repo.expect_save().returning(|_| Ok(()));
 
         // Neither find_by_product_id nor delete_by_product_id should be called
@@ -456,6 +506,7 @@ mod tests {
         let result = use_case
             .execute(UpdateProductParams {
                 id: product_id,
+                user_id: test_user_id(),
                 name: "Test Product".to_string(),
                 status: ProductStatus::Finished,
                 location: None,

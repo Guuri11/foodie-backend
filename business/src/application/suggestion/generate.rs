@@ -31,7 +31,7 @@ impl GenerateSuggestionsUseCase for GenerateSuggestionsUseCaseImpl {
 
         let products = self
             .repository
-            .get_active_products()
+            .get_active_products(&params.user_id)
             .await
             .map_err(|_| SuggestionError::GenerationFailed)?;
 
@@ -72,6 +72,7 @@ mod tests {
     use crate::domain::errors::RepositoryError;
     use crate::domain::product::model::Product;
     use crate::domain::product::value_objects::ProductStatus;
+    use crate::domain::shared::value_objects::UserId;
     use crate::domain::suggestion::model::{Suggestion, SuggestionIngredient, TimeRange};
     use chrono::{Duration, Utc};
     use mockall::mock;
@@ -82,11 +83,11 @@ mod tests {
 
         #[async_trait]
         impl ProductRepository for ProductRepo {
-            async fn get_all(&self) -> Result<Vec<Product>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<Product, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<Product, RepositoryError>;
             async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn get_active_products(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
         }
     }
 
@@ -123,9 +124,14 @@ mod tests {
         Arc::new(logger)
     }
 
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
+    }
+
     fn product_expiring_in(name: &str, days: i64) -> Product {
         Product::from_repository(
             Uuid::new_v4(),
+            test_user_id(),
             name.to_string(),
             ProductStatus::Opened,
             None,
@@ -141,6 +147,7 @@ mod tests {
     fn expired_product(name: &str) -> Product {
         Product::from_repository(
             Uuid::new_v4(),
+            test_user_id(),
             name.to_string(),
             ProductStatus::Opened,
             None,
@@ -174,7 +181,7 @@ mod tests {
     #[tokio::test]
     async fn should_return_suggestions_when_products_available() {
         let mut mock_repo = MockProductRepo::new();
-        mock_repo.expect_get_active_products().returning(|| {
+        mock_repo.expect_get_active_products().returning(|_| {
             Ok(vec![
                 product_expiring_in("Chicken breast", 1),
                 product_expiring_in("Rice", 30),
@@ -193,7 +200,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GenerateSuggestionsParams { limit: 5 })
+            .execute(GenerateSuggestionsParams {
+                user_id: test_user_id(),
+                limit: 5,
+            })
             .await;
 
         assert!(result.is_ok());
@@ -205,7 +215,7 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         mock_repo
             .expect_get_active_products()
-            .returning(|| Ok(vec![]));
+            .returning(|_| Ok(vec![]));
 
         let mock_generator = MockSuggestionGenerator::new();
 
@@ -216,7 +226,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GenerateSuggestionsParams { limit: 5 })
+            .execute(GenerateSuggestionsParams {
+                user_id: test_user_id(),
+                limit: 5,
+            })
             .await;
 
         assert!(result.is_ok());
@@ -226,7 +239,7 @@ mod tests {
     #[tokio::test]
     async fn should_filter_out_expired_products_before_generating() {
         let mut mock_repo = MockProductRepo::new();
-        mock_repo.expect_get_active_products().returning(|| {
+        mock_repo.expect_get_active_products().returning(|_| {
             Ok(vec![
                 expired_product("Old yogurt"),
                 product_expiring_in("Fresh milk", 2),
@@ -249,7 +262,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GenerateSuggestionsParams { limit: 5 })
+            .execute(GenerateSuggestionsParams {
+                user_id: test_user_id(),
+                limit: 5,
+            })
             .await;
 
         assert!(result.is_ok());
@@ -258,7 +274,7 @@ mod tests {
     #[tokio::test]
     async fn should_return_empty_when_all_products_expired() {
         let mut mock_repo = MockProductRepo::new();
-        mock_repo.expect_get_active_products().returning(|| {
+        mock_repo.expect_get_active_products().returning(|_| {
             Ok(vec![
                 expired_product("Old yogurt"),
                 expired_product("Expired milk"),
@@ -274,7 +290,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GenerateSuggestionsParams { limit: 5 })
+            .execute(GenerateSuggestionsParams {
+                user_id: test_user_id(),
+                limit: 5,
+            })
             .await;
 
         assert!(result.is_ok());
@@ -286,7 +305,7 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         mock_repo
             .expect_get_active_products()
-            .returning(|| Err(RepositoryError::Persistence));
+            .returning(|_| Err(RepositoryError::Persistence));
 
         let mock_generator = MockSuggestionGenerator::new();
 
@@ -297,7 +316,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(GenerateSuggestionsParams { limit: 5 })
+            .execute(GenerateSuggestionsParams {
+                user_id: test_user_id(),
+                limit: 5,
+            })
             .await;
 
         assert!(result.is_err());

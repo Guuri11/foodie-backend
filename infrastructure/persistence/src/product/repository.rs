@@ -5,6 +5,7 @@ use uuid::Uuid;
 use business::domain::errors::RepositoryError;
 use business::domain::product::model::Product;
 use business::domain::product::repository::ProductRepository;
+use business::domain::shared::value_objects::UserId;
 
 use super::entity::ProductEntity;
 
@@ -20,10 +21,11 @@ impl ProductRepositoryPostgres {
 
 #[async_trait]
 impl ProductRepository for ProductRepositoryPostgres {
-    async fn get_all(&self) -> Result<Vec<Product>, RepositoryError> {
+    async fn get_all(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError> {
         let entities = sqlx::query_as::<_, ProductEntity>(
-            "SELECT id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at FROM products ORDER BY created_at DESC",
+            "SELECT id, user_id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at FROM products WHERE user_id = $1 ORDER BY created_at DESC",
         )
+        .bind(user_id.as_str())
         .fetch_all(&self.pool)
         .await
         .map_err(|_| RepositoryError::DatabaseError)?;
@@ -31,11 +33,12 @@ impl ProductRepository for ProductRepositoryPostgres {
         Ok(entities.into_iter().map(|e| e.into_domain()).collect())
     }
 
-    async fn get_by_id(&self, id: Uuid) -> Result<Product, RepositoryError> {
+    async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<Product, RepositoryError> {
         let entity = sqlx::query_as::<_, ProductEntity>(
-            "SELECT id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at FROM products WHERE id = $1",
+            "SELECT id, user_id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at FROM products WHERE id = $1 AND user_id = $2",
         )
         .bind(id)
+        .bind(user_id.as_str())
         .fetch_optional(&self.pool)
         .await
         .map_err(|_| RepositoryError::DatabaseError)?
@@ -46,8 +49,8 @@ impl ProductRepository for ProductRepositoryPostgres {
 
     async fn save(&self, product: &Product) -> Result<(), RepositoryError> {
         sqlx::query(
-            r#"INSERT INTO products (id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            r#"INSERT INTO products (id, user_id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 status = EXCLUDED.status,
@@ -59,6 +62,7 @@ impl ProductRepository for ProductRepositoryPostgres {
                 updated_at = EXCLUDED.updated_at"#,
         )
         .bind(product.id)
+        .bind(product.user_id.as_str())
         .bind(&product.name)
         .bind(product.status.to_string())
         .bind(product.location.as_ref().map(|l| l.to_string()))
@@ -75,9 +79,10 @@ impl ProductRepository for ProductRepositoryPostgres {
         Ok(())
     }
 
-    async fn delete(&self, id: Uuid) -> Result<(), RepositoryError> {
-        sqlx::query("DELETE FROM products WHERE id = $1")
+    async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError> {
+        sqlx::query("DELETE FROM products WHERE id = $1 AND user_id = $2")
             .bind(id)
+            .bind(user_id.as_str())
             .execute(&self.pool)
             .await
             .map_err(|_| RepositoryError::DatabaseError)?;
@@ -85,10 +90,11 @@ impl ProductRepository for ProductRepositoryPostgres {
         Ok(())
     }
 
-    async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError> {
+    async fn get_active_products(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError> {
         let entities = sqlx::query_as::<_, ProductEntity>(
-            "SELECT id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at FROM products WHERE status != 'finished' ORDER BY created_at DESC",
+            "SELECT id, user_id, name, status, location, quantity, expiry_date, estimated_expiry_date, outcome, created_at, updated_at FROM products WHERE user_id = $1 AND status != 'finished' ORDER BY created_at DESC",
         )
+        .bind(user_id.as_str())
         .fetch_all(&self.pool)
         .await
         .map_err(|_| RepositoryError::DatabaseError)?;

@@ -24,6 +24,7 @@ pub mod application {
 pub mod domain {
     pub mod errors;
     pub mod logger;
+    pub mod shared;
     pub mod product {
         pub mod errors;
         pub mod model;

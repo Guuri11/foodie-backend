@@ -26,7 +26,10 @@ impl CreateShoppingItemUseCase for CreateShoppingItemUseCaseImpl {
 
         // If product_id is provided, check if it already exists in the list (skip silently)
         if let Some(product_id) = params.product_id
-            && let Ok(Some(_)) = self.repository.find_by_product_id(product_id).await
+            && let Ok(Some(_)) = self
+                .repository
+                .find_by_product_id(product_id, &params.user_id)
+                .await
         {
             self.logger.info(&format!(
                 "Shopping item for product {} already exists, skipping",
@@ -34,13 +37,13 @@ impl CreateShoppingItemUseCase for CreateShoppingItemUseCaseImpl {
             ));
             let existing = self
                 .repository
-                .find_by_product_id(product_id)
+                .find_by_product_id(product_id, &params.user_id)
                 .await?
                 .ok_or(ShoppingItemError::NotFound)?;
             return Ok(existing);
         }
 
-        let item = ShoppingItem::new(params.name, params.product_id)?;
+        let item = ShoppingItem::new(params.user_id, params.name, params.product_id)?;
         self.repository.save(&item).await?;
 
         self.logger
@@ -53,6 +56,7 @@ impl CreateShoppingItemUseCase for CreateShoppingItemUseCaseImpl {
 mod tests {
     use super::*;
     use crate::domain::errors::RepositoryError;
+    use crate::domain::shared::value_objects::UserId;
     use mockall::mock;
     use uuid::Uuid;
 
@@ -61,13 +65,13 @@ mod tests {
 
         #[async_trait]
         impl ShoppingItemRepository for ShoppingItemRepo {
-            async fn get_all(&self) -> Result<Vec<ShoppingItem>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<ShoppingItem, RepositoryError>;
-            async fn find_by_product_id(&self, product_id: Uuid) -> Result<Option<ShoppingItem>, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<ShoppingItem>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<ShoppingItem, RepositoryError>;
+            async fn find_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<Option<ShoppingItem>, RepositoryError>;
             async fn save(&self, item: &ShoppingItem) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_by_product_id(&self, product_id: Uuid) -> Result<(), RepositoryError>;
-            async fn delete_bought(&self) -> Result<u64, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_by_product_id(&self, product_id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn delete_bought(&self, user_id: &UserId) -> Result<u64, RepositoryError>;
         }
     }
 
@@ -91,6 +95,10 @@ mod tests {
         Arc::new(logger)
     }
 
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
+    }
+
     #[tokio::test]
     async fn should_create_shopping_item_when_valid() {
         let mut mock_repo = MockShoppingItemRepo::new();
@@ -103,6 +111,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateShoppingItemParams {
+                user_id: test_user_id(),
                 name: "Extra Virgin Olive Oil".to_string(),
                 product_id: None,
             })
@@ -125,6 +134,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateShoppingItemParams {
+                user_id: test_user_id(),
                 name: "".to_string(),
                 product_id: None,
             })
@@ -139,6 +149,7 @@ mod tests {
         let product_id = Uuid::new_v4();
         let existing_item = ShoppingItem::from_repository(
             Uuid::new_v4(),
+            test_user_id(),
             "Milk".to_string(),
             Some(product_id),
             false,
@@ -150,7 +161,7 @@ mod tests {
         let existing_clone = existing_item.clone();
         mock_repo
             .expect_find_by_product_id()
-            .returning(move |_| Ok(Some(existing_clone.clone())));
+            .returning(move |_, _| Ok(Some(existing_clone.clone())));
 
         let use_case = CreateShoppingItemUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -159,6 +170,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateShoppingItemParams {
+                user_id: test_user_id(),
                 name: "Milk".to_string(),
                 product_id: Some(product_id),
             })
@@ -181,6 +193,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateShoppingItemParams {
+                user_id: test_user_id(),
                 name: "Bread".to_string(),
                 product_id: None,
             })

@@ -23,6 +23,7 @@ impl CreateProductUseCase for CreateProductUseCaseImpl {
             .info(&format!("Creating product: {}", params.name));
 
         let mut product = Product::new(NewProductProps {
+            user_id: params.user_id,
             name: params.name,
             status: params.status,
             location: params.location,
@@ -71,6 +72,7 @@ mod tests {
     use crate::domain::errors::RepositoryError;
     use crate::domain::product::services::{Confidence, ExpiryEstimation};
     use crate::domain::product::value_objects::{ProductOutcome, ProductStatus};
+    use crate::domain::shared::value_objects::UserId;
     use chrono::Duration;
     use mockall::mock;
 
@@ -79,11 +81,11 @@ mod tests {
 
         #[async_trait]
         impl ProductRepository for ProductRepo {
-            async fn get_all(&self) -> Result<Vec<Product>, RepositoryError>;
-            async fn get_by_id(&self, id: uuid::Uuid) -> Result<Product, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
+            async fn get_by_id(&self, id: uuid::Uuid, user_id: &UserId) -> Result<Product, RepositoryError>;
             async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: uuid::Uuid) -> Result<(), RepositoryError>;
-            async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+            async fn delete(&self, id: uuid::Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn get_active_products(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
         }
     }
 
@@ -110,6 +112,10 @@ mod tests {
             fn error(&self, message: &str);
             fn debug(&self, message: &str);
         }
+    }
+
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
     }
 
     fn mock_logger() -> Arc<dyn Logger> {
@@ -145,6 +151,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateProductParams {
+                user_id: test_user_id(),
                 name: "Extra Virgin Olive Oil".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -159,6 +166,7 @@ mod tests {
         let product = result.unwrap();
         assert_eq!(product.name, "Extra Virgin Olive Oil");
         assert_eq!(product.status, ProductStatus::New);
+        assert_eq!(product.user_id, test_user_id());
     }
 
     #[tokio::test]
@@ -173,6 +181,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateProductParams {
+                user_id: test_user_id(),
                 name: "".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -199,6 +208,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateProductParams {
+                user_id: test_user_id(),
                 name: "Milk".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -238,6 +248,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateProductParams {
+                user_id: test_user_id(),
                 name: "Fresh Salmon Fillet".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -272,6 +283,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateProductParams {
+                user_id: test_user_id(),
                 name: "Greek Yogurt".to_string(),
                 status: ProductStatus::New,
                 location: None,
@@ -301,6 +313,7 @@ mod tests {
 
         let result = use_case
             .execute(CreateProductParams {
+                user_id: test_user_id(),
                 name: "Artisan Sourdough Bread".to_string(),
                 status: ProductStatus::New,
                 location: None,

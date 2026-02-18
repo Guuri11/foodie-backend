@@ -21,14 +21,14 @@ impl DeleteProductUseCase for DeleteProductUseCaseImpl {
 
         // Verify product exists before deleting
         self.repository
-            .get_by_id(params.id)
+            .get_by_id(params.id, &params.user_id)
             .await
             .map_err(|e| match e {
                 RepositoryError::NotFound => ProductError::NotFound,
                 other => ProductError::Repository(other),
             })?;
 
-        self.repository.delete(params.id).await?;
+        self.repository.delete(params.id, &params.user_id).await?;
 
         self.logger.info(&format!("Product deleted: {}", params.id));
         Ok(())
@@ -40,6 +40,7 @@ mod tests {
     use super::*;
     use crate::domain::product::model::Product;
     use crate::domain::product::value_objects::ProductStatus;
+    use crate::domain::shared::value_objects::UserId;
     use chrono::Utc;
     use mockall::mock;
     use uuid::Uuid;
@@ -49,11 +50,11 @@ mod tests {
 
         #[async_trait]
         impl ProductRepository for ProductRepo {
-            async fn get_all(&self) -> Result<Vec<Product>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<Product, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<Product, RepositoryError>;
             async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn get_active_products(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
         }
     }
 
@@ -66,6 +67,10 @@ mod tests {
             fn error(&self, message: &str);
             fn debug(&self, message: &str);
         }
+    }
+
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
     }
 
     fn mock_logger() -> Arc<dyn Logger> {
@@ -83,9 +88,10 @@ mod tests {
         let now = Utc::now();
         let mut mock_repo = MockProductRepo::new();
 
-        mock_repo.expect_get_by_id().returning(move |_| {
+        mock_repo.expect_get_by_id().returning(move |_, _| {
             Ok(Product::from_repository(
                 product_id,
+                UserId::new("test-user-id"),
                 "Expired Yogurt".to_string(),
                 ProductStatus::Finished,
                 None,
@@ -97,7 +103,7 @@ mod tests {
                 now,
             ))
         });
-        mock_repo.expect_delete().returning(|_| Ok(()));
+        mock_repo.expect_delete().returning(|_, _| Ok(()));
 
         let use_case = DeleteProductUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -105,7 +111,10 @@ mod tests {
         };
 
         let result = use_case
-            .execute(DeleteProductParams { id: product_id })
+            .execute(DeleteProductParams {
+                id: product_id,
+                user_id: test_user_id(),
+            })
             .await;
 
         assert!(result.is_ok());
@@ -116,7 +125,7 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         mock_repo
             .expect_get_by_id()
-            .returning(|_| Err(RepositoryError::NotFound));
+            .returning(|_, _| Err(RepositoryError::NotFound));
 
         let use_case = DeleteProductUseCaseImpl {
             repository: Arc::new(mock_repo),
@@ -124,7 +133,34 @@ mod tests {
         };
 
         let result = use_case
-            .execute(DeleteProductParams { id: Uuid::new_v4() })
+            .execute(DeleteProductParams {
+                id: Uuid::new_v4(),
+                user_id: test_user_id(),
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ProductError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn should_return_not_found_when_deleting_product_from_other_user() {
+        let mut mock_repo = MockProductRepo::new();
+        // Repository returns NotFound for products belonging to other users
+        mock_repo
+            .expect_get_by_id()
+            .returning(|_, _| Err(RepositoryError::NotFound));
+
+        let use_case = DeleteProductUseCaseImpl {
+            repository: Arc::new(mock_repo),
+            logger: mock_logger(),
+        };
+
+        let result = use_case
+            .execute(DeleteProductParams {
+                id: Uuid::new_v4(),
+                user_id: UserId::new("other-user-id"),
+            })
             .await;
 
         assert!(result.is_err());

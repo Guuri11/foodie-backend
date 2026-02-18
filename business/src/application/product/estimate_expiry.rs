@@ -26,14 +26,14 @@ impl EstimateExpiryUseCase for EstimateExpiryUseCaseImpl {
             params.product_id
         ));
 
-        let mut product =
-            self.repository
-                .get_by_id(params.product_id)
-                .await
-                .map_err(|e| match e {
-                    crate::domain::errors::RepositoryError::NotFound => ProductError::NotFound,
-                    other => ProductError::Repository(other),
-                })?;
+        let mut product = self
+            .repository
+            .get_by_id(params.product_id, &params.user_id)
+            .await
+            .map_err(|e| match e {
+                crate::domain::errors::RepositoryError::NotFound => ProductError::NotFound,
+                other => ProductError::Repository(other),
+            })?;
 
         let status_str = product.status.to_string();
         let location_str = product.location.as_ref().map(|l| l.to_string());
@@ -64,6 +64,7 @@ mod tests {
     use crate::domain::errors::RepositoryError;
     use crate::domain::product::services::{Confidence, ExpiryEstimation};
     use crate::domain::product::value_objects::ProductStatus;
+    use crate::domain::shared::value_objects::UserId;
     use chrono::{Duration, Utc};
     use mockall::mock;
     use uuid::Uuid;
@@ -73,11 +74,11 @@ mod tests {
 
         #[async_trait]
         impl ProductRepository for ProductRepo {
-            async fn get_all(&self) -> Result<Vec<Product>, RepositoryError>;
-            async fn get_by_id(&self, id: Uuid) -> Result<Product, RepositoryError>;
+            async fn get_all(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
+            async fn get_by_id(&self, id: Uuid, user_id: &UserId) -> Result<Product, RepositoryError>;
             async fn save(&self, product: &Product) -> Result<(), RepositoryError>;
-            async fn delete(&self, id: Uuid) -> Result<(), RepositoryError>;
-            async fn get_active_products(&self) -> Result<Vec<Product>, RepositoryError>;
+            async fn delete(&self, id: Uuid, user_id: &UserId) -> Result<(), RepositoryError>;
+            async fn get_active_products(&self, user_id: &UserId) -> Result<Vec<Product>, RepositoryError>;
         }
     }
 
@@ -115,9 +116,14 @@ mod tests {
         Arc::new(logger)
     }
 
+    fn test_user_id() -> UserId {
+        UserId::new("test-user-id")
+    }
+
     fn sample_product(id: Uuid) -> Product {
         Product::from_repository(
             id,
+            test_user_id(),
             "Whole Milk".to_string(),
             ProductStatus::Opened,
             None,
@@ -139,8 +145,8 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         mock_repo
             .expect_get_by_id()
-            .withf(move |id| *id == product_id)
-            .returning(move |_| Ok(product.clone()));
+            .withf(move |id, _| *id == product_id)
+            .returning(move |_, _| Ok(product.clone()));
         mock_repo.expect_save().returning(|_| Ok(()));
 
         let mut mock_estimator = MockExpiryEstimator::new();
@@ -157,7 +163,12 @@ mod tests {
             logger: mock_logger(),
         };
 
-        let result = use_case.execute(EstimateExpiryParams { product_id }).await;
+        let result = use_case
+            .execute(EstimateExpiryParams {
+                product_id,
+                user_id: test_user_id(),
+            })
+            .await;
 
         assert!(result.is_ok());
         let updated = result.unwrap();
@@ -172,7 +183,7 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         mock_repo
             .expect_get_by_id()
-            .returning(move |_| Ok(product.clone()));
+            .returning(move |_, _| Ok(product.clone()));
         // save should NOT be called
         mock_repo.expect_save().never();
 
@@ -190,7 +201,12 @@ mod tests {
             logger: mock_logger(),
         };
 
-        let result = use_case.execute(EstimateExpiryParams { product_id }).await;
+        let result = use_case
+            .execute(EstimateExpiryParams {
+                product_id,
+                user_id: test_user_id(),
+            })
+            .await;
 
         assert!(result.is_ok());
         let product = result.unwrap();
@@ -202,7 +218,7 @@ mod tests {
         let mut mock_repo = MockProductRepo::new();
         mock_repo
             .expect_get_by_id()
-            .returning(|_| Err(RepositoryError::NotFound));
+            .returning(|_, _| Err(RepositoryError::NotFound));
 
         let mock_estimator = MockExpiryEstimator::new();
 
@@ -215,6 +231,7 @@ mod tests {
         let result = use_case
             .execute(EstimateExpiryParams {
                 product_id: Uuid::new_v4(),
+                user_id: test_user_id(),
             })
             .await;
 

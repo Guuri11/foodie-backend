@@ -3,10 +3,12 @@ use uuid::Uuid;
 
 use super::errors::ProductError;
 use super::value_objects::{ProductLocation, ProductOutcome, ProductStatus};
+use crate::domain::shared::value_objects::UserId;
 
 #[derive(Debug, Clone)]
 pub struct Product {
     pub id: Uuid,
+    pub user_id: UserId,
     pub name: String,
     pub status: ProductStatus,
     pub location: Option<ProductLocation>,
@@ -19,6 +21,7 @@ pub struct Product {
 }
 
 pub struct NewProductProps {
+    pub user_id: UserId,
     pub name: String,
     pub status: ProductStatus,
     pub location: Option<ProductLocation>,
@@ -41,6 +44,7 @@ impl Product {
         let now = Utc::now();
         Ok(Self {
             id: Uuid::new_v4(),
+            user_id: props.user_id,
             name: props.name,
             status: props.status,
             location: props.location,
@@ -57,6 +61,7 @@ impl Product {
     #[allow(clippy::too_many_arguments)]
     pub fn from_repository(
         id: Uuid,
+        user_id: UserId,
         name: String,
         status: ProductStatus,
         location: Option<ProductLocation>,
@@ -69,6 +74,7 @@ impl Product {
     ) -> Self {
         Self {
             id,
+            user_id,
             name,
             status,
             location,
